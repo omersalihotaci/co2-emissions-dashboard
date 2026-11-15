@@ -45,7 +45,7 @@ LAST_GDP_YEAR = 2022
 
 
 def insight(text: str):
-    st.info(f"**Insight:** {text}", icon="💡")
+    st.info(f"**Insight** *(default view: all continents, 1990–2024)*: {text}", icon="💡")
 
 
 @st.cache_data
@@ -92,10 +92,10 @@ continents = st.sidebar.multiselect(
     "Continents", list(CONTINENT_COLORS), default=list(CONTINENT_COLORS)
 )
 metric = st.sidebar.selectbox(
-    "Map metric", list(METRICS)[:5], format_func=METRICS.get
+    "Map metric (chart 1)", list(METRICS)[:5], format_func=METRICS.get
 )
 log_scale = st.sidebar.checkbox("Logarithmic scales", value=True)
-top_n = st.sidebar.slider("Top-N countries", 5, 20, 10)
+top_n = st.sidebar.slider("Top-N countries (chart 3)", 5, 20, 10)
 st.sidebar.caption(
     f"Snapshot charts use the last year of the range (**{focus_year}**). "
     f"GDP data ends in {LAST_GDP_YEAR}."
@@ -118,11 +118,13 @@ st.sidebar.download_button(
 st.title("Global CO₂ Emissions, Energy & Economy")
 st.caption(
     "Exploratory dashboard on the Our World in Data CO₂ dataset · "
-    f"{df['country'].nunique()} countries · {df['year'].min()}–{df['year'].max()}"
+    f"{df['country'].nunique()} countries · {df['year'].min()}–{max_y}"
 )
 with st.expander("ℹ️ How to use this dashboard", expanded=False):
     st.markdown("""
-- **Sidebar filters** (year range, continents, log scale, Top-N, map metric) update every chart.
+- **Sidebar filters:** year range and continents filter every chart (snapshot charts use the last year of the range;
+  the regression always trains on 1990–2022). Log scale applies to the box, map, line and bubble charts;
+  map metric changes chart 1 and Top-N changes chart 3.
 - **Tabs:** *Data & Preprocessing* shows how the raw data was cleaned · *Geography & Trends* (charts 1–3) ·
   *Energy Sources & Relationships* (charts 4–6) · *Economy & Machine Learning* (charts 7–9).
 - **Every chart is interactive:** hover for tooltips, drag to zoom, double-click to reset, click legend items to hide or
@@ -174,7 +176,7 @@ with tab0:
             "Before": report["missing_before"], "After": report["missing_after"]
         }).dropna().reset_index(names="column").melt("column", var_name="stage", value_name="missing %")
         fig = px.bar(miss, x="missing %", y="column", color="stage", barmode="group",
-                     orientation="h", template=TEMPLATE, title="Missing values before vs after cleaning",
+                     orientation="h", template=TEMPLATE, title="Missing values before vs after cleaning (full dataset)",
                      color_discrete_map={"Before": "#BAB0AC", "After": "#4C78A8"})
         fig.update_layout(height=430, yaxis_title=None, legend_title=None)
         st.plotly_chart(fig, width="stretch")
@@ -187,7 +189,10 @@ with tab0:
                  color_discrete_map=CONTINENT_COLORS, log_y=log_scale,
                  title="Outlier check: CO₂ per capita by continent (IQR whiskers)",
                  labels={"co2_per_capita": METRICS["co2_per_capita"], "continent": ""})
-    fig.add_hline(y=report["iqr_upper"], line_dash="dot", annotation_text="global IQR upper fence")
+    fig.add_hline(y=report["iqr_upper"], line_dash="dot")
+    fig.add_annotation(x=1, xref="paper", xanchor="right", yanchor="bottom", showarrow=False,
+                       y=np.log10(report["iqr_upper"]) if log_scale else report["iqr_upper"],
+                       text="global IQR upper fence")
     fig.update_layout(showlegend=False)
     st.plotly_chart(fig, width="stretch")
     with st.expander("Most frequently flagged outlier countries / raw data preview"):
@@ -207,9 +212,12 @@ with tab1:
     if log_scale and metric != "share_global_co2":
         map_df = map_df.assign(_log=np.log10(map_df[metric].clip(lower=max(lo, 1e-3))))
         color_col, lo, hi = "_log", np.log10(max(lo, 1e-3)), np.log10(hi)
+    hover = {metric: ":,.2f", "year": True, "iso_code": False}
+    if color_col != metric:
+        hover[color_col] = False
     fig = px.choropleth(
         map_df, locations="iso_code", color=color_col, hover_name="country",
-        hover_data={metric: ":,.2f", "year": True, "iso_code": False, color_col: False},
+        hover_data=hover,
         animation_frame="year", range_color=(lo, hi), color_continuous_scale="YlOrRd",
         template=TEMPLATE, labels={metric: METRICS[metric]},
         title=f"{METRICS[metric]} by country{' (log colour scale)' if color_col == '_log' else ''}",
@@ -285,6 +293,7 @@ with tab2:
                 c = CONTINENT_COLORS[ct].lstrip("#")
                 col.append(f"rgba({int(c[0:2],16)},{int(c[2:4],16)},{int(c[4:6],16)},0.45)")
     fig = go.Figure(go.Sankey(
+        textfont=dict(color="#1F2933", size=13),
         node=dict(label=nodes, pad=18, thickness=18,
                   color=[FUEL_COLORS[f] for f in fuels] + [CONTINENT_COLORS[c] for c in conts],
                   hovertemplate="%{label}: %{value:,.0f} Mt<extra></extra>"),
@@ -425,13 +434,15 @@ with tab3:
 
     # --- Chart 9: Regression (ML #2) ---------------------------------------
     st.subheader("9 · ML #2 — Can we predict a country's CO₂ per capita?")
+    st.caption("Trained on all years 1990–2022, independent of the year slider; the continent filter applies. "
+               "R² and MAE are measured on log₁₀ CO₂ per capita.")
     reg = df[(df["year"] <= LAST_GDP_YEAR) & df["continent"].isin(ml_conts)].dropna(
         subset=["gdp_per_capita", "energy_per_capita", "co2_per_capita"]).copy()
     reg = reg[reg["co2_per_capita"] > 0]
     feat_cols = ["log_gdp_pc", "log_energy_pc", "coal_co2_share", "gas_co2_share", "oil_co2_share", "year"]
     reg["log_gdp_pc"] = np.log10(reg["gdp_per_capita"])
     reg["log_energy_pc"] = np.log10(reg["energy_per_capita"].clip(lower=1))
-    cont_dummies = pd.get_dummies(reg["continent"], prefix="cont", dtype=float)
+    cont_dummies = pd.get_dummies(reg["continent"], prefix="cont", dtype=float, drop_first=True)
     Xr = pd.concat([reg[feat_cols], cont_dummies], axis=1)
     yr = np.log10(reg["co2_per_capita"])
 
@@ -472,7 +483,8 @@ with tab3:
     err = res.assign(log2_err=np.log2(res["predicted"] / res["co2_per_capita"]))
     err = err.groupby("country")["log2_err"].mean().sort_values()
     n_show = min(8, len(err) // 2)
-    err_show = pd.concat([err.head(n_show), err.tail(n_show)]).clip(-3, 3)
+    err_raw = pd.concat([err.head(n_show), err.tail(n_show)])
+    err_show = err_raw.clip(-3, 3)
 
     b1, b2 = st.columns(2)
     with b1:
@@ -489,7 +501,7 @@ with tab3:
                      color_discrete_map={True: "#E45756", False: "#4C78A8"},
                      labels={"x": "prediction error", "y": ""},
                      title="Hardest countries to predict (diverging error)")
-        fig.update_traces(customdata=np.round(2 ** err_show.values, 2),
+        fig.update_traces(customdata=np.round(2 ** err_raw.values, 2),
                           hovertemplate="%{y}: model says ×%{customdata} of the real value<extra></extra>")
         fig.update_xaxes(tickvals=[-3, -2, -1, 0, 1, 2, 3],
                          ticktext=["÷8", "÷4", "÷2", "exact", "×2", "×4", "×8"], range=[-3.2, 3.2])
