@@ -4,6 +4,8 @@
 
 An interactive Streamlit dashboard that explores **who emits CO₂, from which fuels, and how emissions relate to wealth and energy use** for 219 countries between 1990 and 2024. It also uses two machine-learning models to dig deeper.
 
+**🔗 Live app:** https://co2-emissions-dashboardgit.streamlit.app/
+
 ---
 
 ## 📊 Dataset
@@ -64,6 +66,8 @@ Chart 9 also includes a **feature-importance bar chart** and a **diverging error
 ---
 
 ## 🚀 Setup & run
+
+No installation needed to try it: the dashboard is deployed on Streamlit Community Cloud at https://co2-emissions-dashboardgit.streamlit.app/. To run it locally:
 
 ```bash
 git clone https://github.com/omersalihotaci/co2-emissions-dashboard.git
